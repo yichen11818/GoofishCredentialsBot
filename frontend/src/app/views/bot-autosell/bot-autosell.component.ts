@@ -12,6 +12,13 @@ import type {
     Workflow
 } from '../../core/types';
 
+interface SkuBatchRowDraft {
+    id: string;
+    label: string;
+    price: string;
+    stockContent: string;
+}
+
 @Component({
     selector: 'app-bot-autosell',
     imports: [LucideAngularModule, FormsModule, CodeEditorComponent],
@@ -39,6 +46,12 @@ export class BotAutosellComponent implements OnInit {
     stockStats = signal<StockStats | null>(null);
     loadingStock = signal(false);
     showUsedStock = signal(false);
+    batchCreating = signal(false);
+    skuBatchFloatPercent = signal(2);
+    skuBatchRawText = signal('');
+    skuBatchRows = signal<SkuBatchRowDraft[]>([
+        { id: 'sku-batch-default', label: '', price: '', stockContent: '' }
+    ]);
 
     // 库存编辑
     stockContent = signal('');
@@ -85,12 +98,18 @@ export class BotAutosellComponent implements OnInit {
         if (!itemId) return null;
         return this.allGoods().find(g => g.id === itemId) || null;
     });
+    skuBatchConfiguredCount = computed(() =>
+        this.skuBatchRows().filter(row => row.price.trim() || row.stockContent.trim() || row.label.trim()).length
+    );
 
     formData = signal({
         name: '',
         enabled: true,
         itemId: null as string | null,
         accountId: null as string | null,
+        minPrice: null as number | null,
+        maxPrice: null as number | null,
+        followUpMessage: '',
         deliveryType: 'fixed' as DeliveryType,
         deliveryContent: '',
         triggerOn: 'paid' as TriggerOn,
@@ -170,6 +189,9 @@ export class BotAutosellComponent implements OnInit {
             enabled: rule.enabled,
             itemId: rule.itemId,
             accountId: rule.accountId,
+            minPrice: rule.minPrice,
+            maxPrice: rule.maxPrice,
+            followUpMessage: rule.followUpMessage || '',
             deliveryType: rule.deliveryType,
             deliveryContent: rule.deliveryContent || '',
             triggerOn: rule.triggerOn,
@@ -195,6 +217,9 @@ export class BotAutosellComponent implements OnInit {
             enabled: true,
             itemId: null,
             accountId: null,
+            minPrice: null,
+            maxPrice: null,
+            followUpMessage: '',
             deliveryType: 'fixed',
             deliveryContent: '',
             triggerOn: 'paid',
@@ -243,6 +268,49 @@ export class BotAutosellComponent implements OnInit {
         setTimeout(() => this.showGoodsDropdown.set(false), 200);
     }
 
+    createSkuBatchRow(price = '', label = '', stockContent = ''): SkuBatchRowDraft {
+        return {
+            id: `sku_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+            label,
+            price,
+            stockContent
+        };
+    }
+
+    addSkuBatchRow(price = '', label = '', stockContent = '') {
+        this.skuBatchRows.update(rows => [...rows, this.createSkuBatchRow(price, label, stockContent)]);
+    }
+
+    removeSkuBatchRow(id: string) {
+        this.skuBatchRows.update(rows => {
+            if (rows.length === 1) {
+                return [{ ...rows[0], label: '', price: '', stockContent: '' }];
+            }
+            return rows.filter(row => row.id !== id);
+        });
+    }
+
+    updateSkuBatchRow(id: string, field: keyof Omit<SkuBatchRowDraft, 'id'>, value: string) {
+        this.skuBatchRows.update(rows =>
+            rows.map(row => row.id === id ? { ...row, [field]: value } : row)
+        );
+    }
+
+    loadCommonSkuTemplate() {
+        this.skuBatchRows.set([
+            this.createSkuBatchRow('28'),
+            this.createSkuBatchRow('16.6'),
+            this.createSkuBatchRow('2'),
+            this.createSkuBatchRow('1')
+        ]);
+    }
+
+    resetSkuBatchRows() {
+        this.skuBatchRows.set([this.createSkuBatchRow()]);
+        this.skuBatchFloatPercent.set(2);
+        this.skuBatchRawText.set('');
+    }
+
     onStockFileSelect(event: Event) {
         const input = event.target as HTMLInputElement;
         const file = input.files?.[0];
@@ -262,9 +330,336 @@ export class BotAutosellComponent implements OnInit {
         input.value = '';
     }
 
+    normalizeOptionalPrice(value: number | string | null | undefined): number | null {
+        if (value === null || value === undefined || value === '') {
+            return null;
+        }
+
+        const parsed = typeof value === 'number' ? value : Number(value);
+        return Number.isFinite(parsed) ? parsed : null;
+    }
+
+    toTextValue(value: unknown): string {
+        return value === null || value === undefined ? '' : String(value);
+    }
+
+    formatNumericText(value: number | string): string {
+        const price = this.normalizeOptionalPrice(value);
+        if (price === null) {
+            return this.toTextValue(value).trim();
+        }
+        return price.toFixed(2).replace(/\.00$/, '').replace(/(\.\d*[1-9])0+$/, '$1');
+    }
+
     getGoodsTitle(itemId: string): string {
         const goods = this.allGoods().find(g => g.id === itemId);
         return goods?.title || itemId;
+    }
+
+    getSkuBatchBaseName(): string {
+        const manualName = this.formData().name.trim();
+        if (manualName) return manualName;
+        const goods = this.selectedGoods();
+        if (goods?.title) return goods.title;
+        return 'SKU 自动发货';
+    }
+
+    getSkuBatchRangeByPercent(priceValue: number): { minPrice: number; maxPrice: number; delta: number } | null {
+        const percent = this.normalizeOptionalPrice(this.skuBatchFloatPercent());
+        if (percent === null || percent < 0) {
+            return null;
+        }
+
+        const delta = Number((priceValue * percent / 100).toFixed(2));
+        return {
+            minPrice: Math.max(0, Number((priceValue - delta).toFixed(2))),
+            maxPrice: Number((priceValue + delta).toFixed(2)),
+            delta
+        };
+    }
+
+    formatSkuBatchRange(priceText: string): string {
+        const price = this.normalizeOptionalPrice(priceText);
+        if (price === null) {
+            return '输入金额后自动预览';
+        }
+
+        const range = this.getSkuBatchRangeByPercent(price);
+        if (!range) {
+            return '请输入有效的浮动比例';
+        }
+
+        return `¥${range.minPrice} - ¥${range.maxPrice}`;
+    }
+
+    parseSkuHeader(headerText: string): { priceText: string; label: string } | null {
+        const match = headerText.match(/-?\d+(?:\.\d+)?/);
+        if (!match) {
+            return null;
+        }
+
+        const priceText = match[0];
+        const label = headerText
+            .replace(priceText, '')
+            .replace(/[()（）【】\[\]{}]/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+
+        return { priceText, label };
+    }
+
+    async parseSkuBatchText() {
+        const rawText = this.skuBatchRawText().trim();
+        if (!rawText) {
+            await this.dialog.alert('提示', '请先粘贴按分组整理的文本');
+            return;
+        }
+
+        const lines = rawText.split(/\r?\n/);
+        const rows: SkuBatchRowDraft[] = [];
+        let currentHeader: { priceText: string; label: string } | null = null;
+        let currentStockLines: string[] = [];
+
+        const pushCurrentGroup = () => {
+            if (!currentHeader) return;
+            rows.push(this.createSkuBatchRow(
+                currentHeader.priceText,
+                currentHeader.label,
+                currentStockLines.join('\n').trim()
+            ));
+        };
+
+        for (const line of lines) {
+            const trimmed = line.trim();
+            const headerMatch = trimmed.match(/^[\[【](.+?)[\]】]$/);
+
+            if (headerMatch) {
+                const parsedHeader = this.parseSkuHeader(headerMatch[1].trim());
+                if (!parsedHeader) {
+                    await this.dialog.alert('提示', `分组标题格式无法识别：${trimmed}`);
+                    return;
+                }
+
+                pushCurrentGroup();
+                currentHeader = parsedHeader;
+                currentStockLines = [];
+                continue;
+            }
+
+            if (!currentHeader) {
+                continue;
+            }
+
+            if (!trimmed) {
+                continue;
+            }
+
+            currentStockLines.push(trimmed);
+        }
+
+        pushCurrentGroup();
+
+        if (rows.length === 0) {
+            await this.dialog.alert(
+                '提示',
+                '没有解析到任何分组。请按这种格式粘贴：\n[28]\nkey1\nkey2\n\n[16.6]\nkey3'
+            );
+            return;
+        }
+
+        const invalidRow = rows.find(row => !row.stockContent.trim());
+        if (invalidRow) {
+            await this.dialog.alert('提示', `金额 ${invalidRow.price} 的分组里没有解析到 key 库存`);
+            return;
+        }
+
+        this.skuBatchRows.set(rows);
+        await this.dialog.alert('成功', `已解析 ${rows.length} 个分组，你可以直接一键生成规则`);
+    }
+
+    formatPriceRange(rule: Pick<AutoSellRule, 'minPrice' | 'maxPrice'>): string {
+        if (rule.minPrice !== null && rule.maxPrice !== null) {
+            return `¥${rule.minPrice} - ¥${rule.maxPrice}`;
+        }
+        if (rule.minPrice !== null) {
+            return `>= ¥${rule.minPrice}`;
+        }
+        if (rule.maxPrice !== null) {
+            return `<= ¥${rule.maxPrice}`;
+        }
+        return '全部价格';
+    }
+
+    async exportUnusedStockByGroup() {
+        const itemId = this.formData().itemId;
+        if (!itemId) {
+            await this.dialog.alert('提示', '请先选择商品，再导出未使用库存');
+            return;
+        }
+
+        try {
+            const res = await this.service.exportUnusedStock({
+                itemId,
+                accountId: this.formData().accountId,
+                triggerOn: this.formData().triggerOn
+            });
+
+            if (!res.content.trim()) {
+                await this.dialog.alert('提示', '当前商品没有可导出的未使用库存');
+                return;
+            }
+
+            const goods = this.selectedGoods();
+            const fileBaseName = (goods?.title || this.getGoodsTitle(itemId) || itemId)
+                .replace(/[\\/:*?"<>|]/g, '_')
+                .trim();
+            const triggerLabel = this.getTriggerLabel(this.formData().triggerOn);
+            const blob = new Blob([res.content], { type: 'text/plain;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `${fileBaseName}-${triggerLabel}-未使用库存.txt`;
+            link.click();
+            URL.revokeObjectURL(url);
+
+            await this.dialog.alert(
+                '导出成功',
+                `已导出 ${res.ruleCount} 个分组、共 ${res.stockCount} 条未使用库存`
+            );
+        } catch (e) {
+            console.error('导出未使用库存失败', e);
+            await this.dialog.alert('错误', '导出失败，请稍后重试');
+        }
+    }
+
+    async createSkuBatchRules() {
+        const data = this.formData();
+        if (!data.itemId) {
+            await this.dialog.alert('提示', '请先在上方选择商品，再批量生成 SKU 规则');
+            return;
+        }
+
+        const floatPercent = this.normalizeOptionalPrice(this.skuBatchFloatPercent());
+        if (floatPercent === null || floatPercent < 0) {
+            await this.dialog.alert('提示', '请输入有效的浮动比例');
+            return;
+        }
+
+        const preparedRows: Array<{
+            rowIndex: number;
+            label: string;
+            price: number;
+            minPrice: number;
+            maxPrice: number;
+            stockItems: string[];
+            ruleName: string;
+        }> = [];
+
+        for (const [index, row] of this.skuBatchRows().entries()) {
+            const hasAnyValue = row.price.trim() || row.stockContent.trim() || row.label.trim();
+            if (!hasAnyValue) continue;
+
+            const price = this.normalizeOptionalPrice(row.price);
+            if (price === null) {
+                await this.dialog.alert('提示', `第 ${index + 1} 行 SKU 金额无效`);
+                return;
+            }
+
+            const stockItems = row.stockContent
+                .split('\n')
+                .map(item => item.trim())
+                .filter(Boolean);
+
+            if (stockItems.length === 0) {
+                await this.dialog.alert('提示', `第 ${index + 1} 行还没有填写对应的 key 库存`);
+                return;
+            }
+
+            const range = this.getSkuBatchRangeByPercent(price);
+            if (!range) {
+                await this.dialog.alert('提示', '浮动比例无效，请重新填写');
+                return;
+            }
+
+            const minPrice = range.minPrice;
+            const maxPrice = range.maxPrice;
+            const ruleName = row.label.trim()
+                ? `${this.getSkuBatchBaseName()} ${row.label.trim()}`
+                : `${this.getSkuBatchBaseName()} SKU ¥${price}`;
+
+            preparedRows.push({
+                rowIndex: index + 1,
+                label: row.label.trim(),
+                price,
+                minPrice,
+                maxPrice,
+                stockItems,
+                ruleName
+            });
+        }
+
+        if (preparedRows.length === 0) {
+            await this.dialog.alert('提示', '请至少填写一行 SKU 金额和对应库存');
+            return;
+        }
+
+        const sortedRows = [...preparedRows].sort((a, b) => a.minPrice - b.minPrice);
+        for (let i = 1; i < sortedRows.length; i++) {
+            const previous = sortedRows[i - 1];
+            const current = sortedRows[i];
+            if (current.minPrice <= previous.maxPrice) {
+                await this.dialog.alert(
+                    '提示',
+                    `SKU 金额区间发生重叠：${previous.ruleName}（${previous.minPrice}-${previous.maxPrice}）和 ${current.ruleName}（${current.minPrice}-${current.maxPrice}）`
+                );
+                return;
+            }
+        }
+
+        this.batchCreating.set(true);
+        try {
+            let totalStockCount = 0;
+            for (const row of preparedRows) {
+                const res = await this.service.createRule({
+                    name: row.ruleName,
+                    enabled: data.enabled,
+                    itemId: data.itemId,
+                    accountId: data.accountId,
+                    minPrice: row.minPrice,
+                    maxPrice: row.maxPrice,
+                    stockGroupLabel: row.label.trim()
+                        ? `${this.formatNumericText(row.price)} ${row.label.trim()}`
+                        : this.formatNumericText(row.price),
+                    followUpMessage: data.followUpMessage.trim() || null,
+                    deliveryType: 'stock',
+                    deliveryContent: null,
+                    apiConfig: null,
+                    triggerOn: data.triggerOn,
+                    workflowId: data.workflowId
+                });
+
+                if (!res.id) {
+                    throw new Error(`第 ${row.rowIndex} 行规则创建失败`);
+                }
+
+                await this.service.addStock(res.id, row.stockItems);
+                totalStockCount += row.stockItems.length;
+            }
+
+            this.skuBatchRows.update(rows =>
+                rows.map(row => ({ ...row, stockContent: '' }))
+            );
+            await this.loadRules();
+            await this.dialog.alert(
+                '成功',
+                `已生成 ${preparedRows.length} 条 SKU 库存规则，并导入 ${totalStockCount} 条 key 库存。当前浮动比例为 ${floatPercent}%`
+            );
+        } catch (e) {
+            console.error('批量创建 SKU 规则失败', e);
+            await this.dialog.alert('错误', '批量创建失败，请检查配置后重试');
+        } finally {
+            this.batchCreating.set(false);
+        }
     }
 
     async saveRule() {
@@ -275,6 +670,22 @@ export class BotAutosellComponent implements OnInit {
         }
         if (!data.itemId) {
             await this.dialog.alert('提示', '请选择商品');
+            return;
+        }
+
+        const minPrice = this.normalizeOptionalPrice(data.minPrice);
+        const maxPrice = this.normalizeOptionalPrice(data.maxPrice);
+
+        if (minPrice !== null && minPrice < 0) {
+            await this.dialog.alert('提示', '最低价不能小于 0');
+            return;
+        }
+        if (maxPrice !== null && maxPrice < 0) {
+            await this.dialog.alert('提示', '最高价不能小于 0');
+            return;
+        }
+        if (minPrice !== null && maxPrice !== null && minPrice > maxPrice) {
+            await this.dialog.alert('提示', '最低价不能大于最高价');
             return;
         }
 
@@ -312,6 +723,9 @@ export class BotAutosellComponent implements OnInit {
             enabled: data.enabled,
             itemId: data.itemId,
             accountId: data.accountId,
+            minPrice,
+            maxPrice,
+            followUpMessage: data.deliveryType === 'stock' ? (data.followUpMessage.trim() || null) : null,
             deliveryType: data.deliveryType,
             deliveryContent: data.deliveryType === 'fixed' ? data.deliveryContent : null,
             apiConfig,

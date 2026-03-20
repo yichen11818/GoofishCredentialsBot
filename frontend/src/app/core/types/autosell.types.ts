@@ -19,6 +19,10 @@ export interface AutoSellRule {
     enabled: boolean;
     itemId: string | null;
     accountId: string | null;
+    minPrice: number | null;
+    maxPrice: number | null;
+    stockGroupLabel: string | null;
+    followUpMessage: string | null;
     deliveryType: DeliveryType;
     deliveryContent: string | null;
     apiConfig: ApiConfig | null;
@@ -56,4 +60,10 @@ export interface DeliveryLog {
     status: 'success' | 'failed';
     errorMessage: string | null;
     createdAt: string;
+}
+
+export interface ExportUnusedStockResponse {
+    content: string;
+    ruleCount: number;
+    stockCount: number;
 }

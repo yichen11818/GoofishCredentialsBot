@@ -221,6 +221,10 @@ function createAutoSellTables() {
       enabled INTEGER DEFAULT 1,
       item_id TEXT,
       account_id TEXT,
+      min_price REAL,
+      max_price REAL,
+      stock_group_label TEXT,
+      follow_up_message TEXT,
       delivery_type TEXT NOT NULL,
       delivery_content TEXT,
       api_config TEXT,
@@ -232,6 +236,10 @@ function createAutoSellTables() {
   `)
 
   safeAddColumn('autosell_rules', 'workflow_id', 'INTEGER')
+  safeAddColumn('autosell_rules', 'min_price', 'REAL')
+  safeAddColumn('autosell_rules', 'max_price', 'REAL')
+  safeAddColumn('autosell_rules', 'stock_group_label', 'TEXT')
+  safeAddColumn('autosell_rules', 'follow_up_message', 'TEXT')
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS autosell_stock (

@@ -24,6 +24,10 @@ function toRule(row: any): AutoSellRule {
         enabled: row.enabled === 1,
         itemId: row.item_id,
         accountId: row.account_id,
+        minPrice: row.min_price ?? null,
+        maxPrice: row.max_price ?? null,
+        stockGroupLabel: row.stock_group_label ?? null,
+        followUpMessage: row.follow_up_message ?? null,
         deliveryType: row.delivery_type,
         deliveryContent: row.delivery_content,
         apiConfig: row.api_config ? JSON.parse(row.api_config) : null,
@@ -72,14 +76,21 @@ export function getAutoSellRule(id: number): AutoSellRule | undefined {
 // 创建规则
 export function createAutoSellRule(rule: CreateAutoSellRuleParams): number {
     const stmt = db.prepare(`
-        INSERT INTO autosell_rules (name, enabled, item_id, account_id, delivery_type, delivery_content, api_config, trigger_on, workflow_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO autosell_rules (
+            name, enabled, item_id, account_id, min_price, max_price, stock_group_label, follow_up_message,
+            delivery_type, delivery_content, api_config, trigger_on, workflow_id
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
     const result = stmt.run(
         rule.name,
         rule.enabled !== false ? 1 : 0,
         rule.itemId || null,
         rule.accountId || null,
+        rule.minPrice ?? null,
+        rule.maxPrice ?? null,
+        rule.stockGroupLabel ?? null,
+        rule.followUpMessage ?? null,
         rule.deliveryType,
         rule.deliveryContent || null,
         rule.apiConfig ? JSON.stringify(rule.apiConfig) : null,
@@ -96,7 +107,7 @@ export function updateAutoSellRule(id: number, rule: UpdateAutoSellRuleParams): 
 
     const stmt = db.prepare(`
         UPDATE autosell_rules SET
-            name = ?, enabled = ?, item_id = ?, account_id = ?,
+            name = ?, enabled = ?, item_id = ?, account_id = ?, min_price = ?, max_price = ?, stock_group_label = ?, follow_up_message = ?,
             delivery_type = ?, delivery_content = ?, api_config = ?, trigger_on = ?, workflow_id = ?,
             updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
@@ -106,6 +117,10 @@ export function updateAutoSellRule(id: number, rule: UpdateAutoSellRuleParams): 
         rule.enabled !== undefined ? (rule.enabled ? 1 : 0) : (existing.enabled ? 1 : 0),
         rule.itemId !== undefined ? rule.itemId : existing.itemId,
         rule.accountId !== undefined ? rule.accountId : existing.accountId,
+        rule.minPrice !== undefined ? rule.minPrice : existing.minPrice,
+        rule.maxPrice !== undefined ? rule.maxPrice : existing.maxPrice,
+        rule.stockGroupLabel !== undefined ? rule.stockGroupLabel : existing.stockGroupLabel,
+        rule.followUpMessage !== undefined ? rule.followUpMessage : existing.followUpMessage,
         rule.deliveryType ?? existing.deliveryType,
         rule.deliveryContent !== undefined ? rule.deliveryContent : existing.deliveryContent,
         rule.apiConfig !== undefined ? (rule.apiConfig ? JSON.stringify(rule.apiConfig) : null) : (existing.apiConfig ? JSON.stringify(existing.apiConfig) : null),

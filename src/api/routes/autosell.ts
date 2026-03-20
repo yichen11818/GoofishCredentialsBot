@@ -21,6 +21,30 @@ import {
 export function createAutoSellRoutes() {
     const router = new Hono()
 
+    function formatPriceValue(price: number): string {
+        return price.toFixed(2).replace(/\.00$/, '').replace(/(\.\d*[1-9])0+$/, '$1')
+    }
+
+    function getExportGroupTitle(rule: ReturnType<typeof getAutoSellRules>[number]): string {
+        if (rule.stockGroupLabel?.trim()) {
+            return rule.stockGroupLabel.trim()
+        }
+
+        if (rule.minPrice !== null && rule.maxPrice !== null) {
+            return formatPriceValue((rule.minPrice + rule.maxPrice) / 2)
+        }
+
+        if (rule.minPrice !== null) {
+            return `>= ${formatPriceValue(rule.minPrice)}`
+        }
+
+        if (rule.maxPrice !== null) {
+            return `<= ${formatPriceValue(rule.maxPrice)}`
+        }
+
+        return rule.name
+    }
+
     // ========== 规则管理 ==========
 
     // 获取所有规则
@@ -35,6 +59,51 @@ export function createAutoSellRoutes() {
             return r
         })
         return c.json({ rules: rulesWithStats })
+    })
+
+    // 导出未使用库存（按分组文本）
+    router.get('/export-unused', (c) => {
+        const itemId = c.req.query('itemId')
+        const accountId = c.req.query('accountId') || undefined
+        const triggerOn = c.req.query('triggerOn') || undefined
+
+        if (!itemId) {
+            return c.json({ error: '请提供商品 ID' }, 400)
+        }
+
+        const matchedRules = getAutoSellRules()
+            .filter(rule => rule.deliveryType === 'stock')
+            .filter(rule => rule.itemId === itemId)
+            .filter(rule => !accountId || rule.accountId === null || rule.accountId === accountId)
+            .filter(rule => !triggerOn || rule.triggerOn === triggerOn)
+            .sort((a, b) => {
+                const aPrice = a.minPrice ?? a.maxPrice ?? Number.POSITIVE_INFINITY
+                const bPrice = b.minPrice ?? b.maxPrice ?? Number.POSITIVE_INFINITY
+                if (aPrice !== bPrice) return aPrice - bPrice
+                return a.id - b.id
+            })
+
+        const groups = matchedRules
+            .map(rule => ({
+                title: getExportGroupTitle(rule),
+                items: getStockItems(rule.id, false)
+            }))
+            .filter(group => group.items.length > 0)
+
+        const content = groups
+            .map(group => [
+                `[${group.title}]`,
+                ...group.items.map(item => item.content)
+            ].join('\n'))
+            .join('\n\n')
+
+        const stockCount = groups.reduce((sum, group) => sum + group.items.length, 0)
+
+        return c.json({
+            content,
+            ruleCount: groups.length,
+            stockCount
+        })
     })
 
     // 获取单个规则

@@ -1,7 +1,7 @@
 import { Injectable, inject } from '@angular/core';
 
 import { HttpService } from '../utils';
-import type { AutoSellRule, StockItem, StockStats, DeliveryLog } from '../types';
+import type { AutoSellRule, StockItem, StockStats, DeliveryLog, ExportUnusedStockResponse, TriggerOn } from '../types';
 
 @Injectable({ providedIn: 'root' })
 export class AutoSellService {
@@ -51,6 +51,14 @@ export class AutoSellService {
         return this.http.delete<{ success: boolean; count: number }>(
             `/api/autosell/${ruleId}/stock${query}`
         );
+    }
+
+    exportUnusedStock(params: { itemId: string; accountId?: string | null; triggerOn?: TriggerOn }) {
+        return this.http.get<ExportUnusedStockResponse>('/api/autosell/export-unused', {
+            itemId: params.itemId,
+            accountId: params.accountId || undefined,
+            triggerOn: params.triggerOn
+        });
     }
 
     // 发货记录

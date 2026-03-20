@@ -5,6 +5,7 @@
 import { createLogger } from '../core/logger.js'
 import {
     getEnabledAutoSellRules,
+    getAutoSellRule,
     getStockStats,
     consumeStock,
     addDeliveryLog,
@@ -13,6 +14,90 @@ import {
 import type { AutoSellRule, DeliveryResult, ApiConfig } from '../types/index.js'
 
 const logger = createLogger('Svc:AutoSell')
+
+function parsePriceValue(price?: string | number | null): number | null {
+    if (price === null || price === undefined || price === '') {
+        return null
+    }
+
+    if (typeof price === 'number') {
+        return Number.isFinite(price) ? price : null
+    }
+
+    const normalized = String(price).replace(/,/g, '').trim()
+    const match = normalized.match(/-?\d+(?:\.\d+)?/)
+    if (!match) {
+        return null
+    }
+
+    const value = Number.parseFloat(match[0])
+    return Number.isFinite(value) ? value : null
+}
+
+function isPriceMatched(rule: AutoSellRule, orderPrice?: string | number | null): boolean {
+    if (rule.minPrice === null && rule.maxPrice === null) {
+        return true
+    }
+
+    const priceValue = parsePriceValue(orderPrice)
+    if (priceValue === null) {
+        return false
+    }
+
+    if (rule.minPrice !== null && priceValue < rule.minPrice) {
+        return false
+    }
+
+    if (rule.maxPrice !== null && priceValue > rule.maxPrice) {
+        return false
+    }
+
+    return true
+}
+
+function getPriceRangeSpan(rule: AutoSellRule): number {
+    if (rule.minPrice !== null && rule.maxPrice !== null) {
+        return Math.max(rule.maxPrice - rule.minPrice, 0)
+    }
+
+    return Number.POSITIVE_INFINITY
+}
+
+function compareMatchedRules(a: AutoSellRule, b: AutoSellRule): number {
+    const aSpecificity =
+        (a.itemId ? 4 : 0) +
+        (a.accountId ? 2 : 0) +
+        (a.minPrice !== null || a.maxPrice !== null ? 1 : 0)
+    const bSpecificity =
+        (b.itemId ? 4 : 0) +
+        (b.accountId ? 2 : 0) +
+        (b.minPrice !== null || b.maxPrice !== null ? 1 : 0)
+
+    if (aSpecificity !== bSpecificity) {
+        return bSpecificity - aSpecificity
+    }
+
+    const spanDiff = getPriceRangeSpan(a) - getPriceRangeSpan(b)
+    if (spanDiff !== 0) {
+        return spanDiff
+    }
+
+    return a.id - b.id
+}
+
+export function findMatchedAutoSellRule(
+    accountId: string,
+    itemId?: string,
+    triggerOn: 'paid' | 'confirmed' = 'paid',
+    orderPrice?: string | number | null
+): AutoSellRule | null {
+    const rules = getEnabledAutoSellRules(accountId, itemId)
+        .filter(rule => rule.triggerOn === triggerOn)
+        .filter(rule => isPriceMatched(rule, orderPrice))
+        .sort(compareMatchedRules)
+
+    return rules[0] || null
+}
 
 /**
  * 通过 API 获取发货内容
@@ -84,7 +169,11 @@ async function executeDelivery(
             if (!stock) {
                 return { success: false, error: '库存不足' }
             }
-            return { success: true, content: stock.content }
+            return {
+                success: true,
+                content: stock.content,
+                followUpMessage: rule.followUpMessage || undefined
+            }
         }
 
         case 'api': {
@@ -111,7 +200,11 @@ export async function processAutoSell(
     accountId: string,
     orderId: string,
     itemId?: string,
-    triggerOn: 'paid' | 'confirmed' = 'paid'
+    options: {
+        triggerOn?: 'paid' | 'confirmed'
+        ruleId?: number
+        orderPrice?: string | number | null
+    } = {}
 ): Promise<DeliveryResult & { ruleName?: string }> {
     // 检查是否已发货
     if (hasDelivered(orderId)) {
@@ -120,8 +213,14 @@ export async function processAutoSell(
     }
 
     // 获取匹配的规则
-    const rules = getEnabledAutoSellRules(accountId, itemId)
-    const matchedRule = rules.find(r => r.triggerOn === triggerOn)
+    const matchedRule = options.ruleId
+        ? getAutoSellRule(options.ruleId)
+        : findMatchedAutoSellRule(
+            accountId,
+            itemId,
+            options.triggerOn || 'paid',
+            options.orderPrice
+        )
 
     if (!matchedRule) {
         logger.debug(`订单 ${orderId} 无匹配的自动发货规则`)
@@ -138,7 +237,12 @@ export async function processAutoSell(
     }
 
     // 执行发货
-    const context = { orderId, accountId, itemId: itemId || '' }
+    const context = {
+        orderId,
+        accountId,
+        itemId: itemId || '',
+        orderPrice: options.orderPrice != null ? String(options.orderPrice) : ''
+    }
     const result = await executeDelivery(matchedRule, orderId, context)
 
     // 记录发货日志

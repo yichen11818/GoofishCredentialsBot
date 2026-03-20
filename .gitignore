@@ -15,6 +15,7 @@ docs/.vitepress/cache/
 # Data
 data/
 logs/
+runtime/
 
 # IDE
 .vscode/

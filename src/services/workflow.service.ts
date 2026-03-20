@@ -30,6 +30,7 @@ interface ExecutionContext {
     orderId: string
     accountId: string
     itemId?: string
+    orderPrice?: string
     ruleId: number
     client: GoofishClient
     buyerUserId?: string
@@ -79,6 +80,7 @@ export async function startWorkflowExecution(
         currentNodeId: triggerNode.id,
         context: {
             itemId: context.itemId,
+            orderPrice: context.orderPrice,
             buyerUserId: context.buyerUserId,
             chatId: context.chatId
         }
@@ -208,25 +210,45 @@ async function executeDeliveryNode(
         context.accountId,
         context.orderId,
         context.itemId,
-        rule.triggerOn
+        {
+            ruleId: context.ruleId,
+            triggerOn: rule.triggerOn,
+            orderPrice: context.orderPrice
+        }
     )
 
     if (!result.success) {
         return { success: false, error: result.error }
     }
 
-    // 发送发货内容给买家
-    if (result.content && context.chatId && context.buyerUserId) {
-        const sendResult = await context.client.sendMessage(
-            context.chatId,
-            context.buyerUserId,
-            result.content
-        )
-        if (!sendResult) {
-            return { success: false, error: '发送发货消息失败' }
+    // 发送发货内容和补充消息给买家
+    if (context.chatId && context.buyerUserId) {
+        if (result.content) {
+            const sendResult = await context.client.sendMessage(
+                context.chatId,
+                context.buyerUserId,
+                result.content
+            )
+            if (!sendResult) {
+                return { success: false, error: '发送发货消息失败' }
+            }
+            logger.info(`发货消息已发送: ${context.orderId}`)
         }
-        logger.info(`发货消息已发送: ${context.orderId}`)
-    } else if (result.content && !context.chatId) {
+
+        if (result.followUpMessage) {
+            const followUpResult = await context.client.sendMessage(
+                context.chatId,
+                context.buyerUserId,
+                result.followUpMessage
+            )
+
+            if (!followUpResult) {
+                logger.warn(`补充消息发送失败: ${context.orderId}`)
+            } else {
+                logger.info(`补充消息已发送: ${context.orderId}`)
+            }
+        }
+    } else if (result.content || result.followUpMessage) {
         logger.warn(`发货节点缺少 chatId，无法发送消息: ${context.orderId}`)
     }
 
@@ -416,7 +438,11 @@ async function executeDefaultFlow(
         context.accountId,
         context.orderId,
         context.itemId,
-        rule.triggerOn
+        {
+            ruleId: context.ruleId,
+            triggerOn: rule.triggerOn,
+            orderPrice: context.orderPrice
+        }
     )
 
     if (!result.success) {
@@ -424,13 +450,27 @@ async function executeDefaultFlow(
     }
 
     // 发送消息
-    if (result.content && context.chatId && context.buyerUserId) {
-        await context.client.sendMessage(
-            context.chatId,
-            context.buyerUserId,
-            result.content
-        )
-    } else if (result.content && !context.chatId) {
+    if (context.chatId && context.buyerUserId) {
+        if (result.content) {
+            await context.client.sendMessage(
+                context.chatId,
+                context.buyerUserId,
+                result.content
+            )
+        }
+
+        if (result.followUpMessage) {
+            const followUpResult = await context.client.sendMessage(
+                context.chatId,
+                context.buyerUserId,
+                result.followUpMessage
+            )
+
+            if (!followUpResult) {
+                logger.warn(`默认流程补充消息发送失败: ${context.orderId}`)
+            }
+        }
+    } else if (result.content || result.followUpMessage) {
         logger.warn(`默认流程缺少 chatId，无法发送消息: ${context.orderId}`)
     }
 
@@ -489,7 +529,8 @@ export async function handleUserReply(
                     client,
                     chatId,
                     buyerUserId,
-                    itemId: execution.context?.itemId
+                    itemId: execution.context?.itemId,
+                    orderPrice: execution.context?.orderPrice
                 }
 
                 await executeFromNode(

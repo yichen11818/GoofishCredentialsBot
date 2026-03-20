@@ -24,6 +24,10 @@ export interface AutoSellRule {
     enabled: boolean
     itemId: string | null
     accountId: string | null
+    minPrice: number | null
+    maxPrice: number | null
+    stockGroupLabel: string | null
+    followUpMessage: string | null
     deliveryType: DeliveryType
     deliveryContent: string | null
     apiConfig: ApiConfig | null
@@ -42,10 +46,15 @@ export interface DbAutoSellRule {
     enabled: number
     item_id: string | null
     account_id: string | null
+    min_price: number | null
+    max_price: number | null
+    stock_group_label: string | null
+    follow_up_message: string | null
     delivery_type: DeliveryType
     delivery_content: string | null
     api_config: string | null
     trigger_on: TriggerOn
+    workflow_id: number | null
     created_at: string
     updated_at: string
 }
@@ -104,6 +113,10 @@ export interface CreateAutoSellRuleParams {
     enabled?: boolean
     itemId?: string | null
     accountId?: string | null
+    minPrice?: number | null
+    maxPrice?: number | null
+    stockGroupLabel?: string | null
+    followUpMessage?: string | null
     deliveryType: DeliveryType
     deliveryContent?: string | null
     apiConfig?: ApiConfig | null
@@ -117,6 +130,10 @@ export interface UpdateAutoSellRuleParams {
     enabled?: boolean
     itemId?: string | null
     accountId?: string | null
+    minPrice?: number | null
+    maxPrice?: number | null
+    stockGroupLabel?: string | null
+    followUpMessage?: string | null
     deliveryType?: DeliveryType
     deliveryContent?: string | null
     apiConfig?: ApiConfig | null
@@ -128,5 +145,6 @@ export interface UpdateAutoSellRuleParams {
 export interface DeliveryResult {
     success: boolean
     content?: string
+    followUpMessage?: string
     error?: string
 }

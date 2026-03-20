@@ -9,10 +9,10 @@ import {
     getOrderCount,
     getOrderById,
     upsertOrder,
-    updateOrderStatus,
-    getEnabledAutoSellRules
+    updateOrderStatus
 } from '../db/index.js'
 import { OrderStatus, ORDER_STATUS_TEXT } from '../types/order.types.js'
+import { findMatchedAutoSellRule } from './autosell.service.js'
 import { startWorkflowExecution } from './workflow.service.js'
 import type { OrderRecord, OrderListParams, OrderDetailData } from '../types/order.types.js'
 import type { GoofishClient } from '../websocket/client.js'
@@ -122,10 +122,10 @@ export async function fetchAndUpdateOrderDetail(
         // 检查是否需要触发自动发货
         if (status === OrderStatus.PENDING_SHIPMENT && oldStatus !== OrderStatus.PENDING_SHIPMENT) {
             // 订单变为待发货状态，触发自动发货
-            await triggerAutoSell(client, orderId, itemIdStr, buyerUserIdStr, 'paid')
+            await triggerAutoSell(client, orderId, itemIdStr, buyerUserIdStr, price, 'paid')
         } else if (status === OrderStatus.PENDING_RECEIPT && oldStatus !== OrderStatus.PENDING_RECEIPT) {
             // 订单变为待收货状态，触发确认收货后的自动发货
-            await triggerAutoSell(client, orderId, itemIdStr, buyerUserIdStr, 'confirmed')
+            await triggerAutoSell(client, orderId, itemIdStr, buyerUserIdStr, price, 'confirmed')
         }
 
         return data
@@ -143,12 +143,17 @@ async function triggerAutoSell(
     orderId: string,
     itemId: string | undefined,
     buyerUserId: string | undefined,
+    orderPrice: string | undefined,
     triggerOn: 'paid' | 'confirmed'
 ): Promise<void> {
     try {
         // 获取匹配的规则
-        const rules = getEnabledAutoSellRules(client.accountId, itemId)
-        const matchedRule = rules.find(r => r.triggerOn === triggerOn)
+        const matchedRule = findMatchedAutoSellRule(
+            client.accountId,
+            itemId,
+            triggerOn,
+            orderPrice
+        )
 
         if (!matchedRule) {
             logger.debug(`订单 ${orderId} 无匹配的自动发货规则`)
@@ -167,7 +172,8 @@ async function triggerAutoSell(
             ruleId: matchedRule.id,
             client,
             buyerUserId,
-            chatId
+            chatId,
+            orderPrice
         })
 
         if (!result.success) {
