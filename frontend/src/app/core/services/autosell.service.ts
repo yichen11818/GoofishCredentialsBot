@@ -1,7 +1,15 @@
 import { Injectable, inject } from '@angular/core';
 
 import { HttpService } from '../utils';
-import type { AutoSellRule, StockItem, StockStats, DeliveryLog, ExportUnusedStockResponse, TriggerOn } from '../types';
+import type {
+    AutoSellRule,
+    StockItem,
+    StockStats,
+    DeliveryLog,
+    ExportUnusedStockResponse,
+    TriggerOn,
+    UncoveredAutoSellItemAlert
+} from '../types';
 
 @Injectable({ providedIn: 'root' })
 export class AutoSellService {
@@ -53,11 +61,19 @@ export class AutoSellService {
         );
     }
 
-    exportUnusedStock(params: { itemId: string; accountId?: string | null; triggerOn?: TriggerOn }) {
+    exportUnusedStock(params: { itemIds: string[]; accountId?: string | null; triggerOn?: TriggerOn }) {
         return this.http.get<ExportUnusedStockResponse>('/api/autosell/export-unused', {
-            itemId: params.itemId,
+            itemIds: params.itemIds.join(','),
             accountId: params.accountId || undefined,
             triggerOn: params.triggerOn
+        });
+    }
+
+    getCoverageAlerts(params?: { accountId?: string | null; triggerOn?: TriggerOn; limit?: number }) {
+        return this.http.get<{ items: UncoveredAutoSellItemAlert[] }>('/api/autosell/coverage-alerts', {
+            accountId: params?.accountId || undefined,
+            triggerOn: params?.triggerOn,
+            limit: params?.limit ? String(params.limit) : undefined
         });
     }
 

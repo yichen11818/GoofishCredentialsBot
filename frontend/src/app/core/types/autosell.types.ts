@@ -18,6 +18,7 @@ export interface AutoSellRule {
     name: string;
     enabled: boolean;
     itemId: string | null;
+    itemIds: string[];
     accountId: string | null;
     minPrice: number | null;
     maxPrice: number | null;
@@ -66,4 +67,24 @@ export interface ExportUnusedStockResponse {
     content: string;
     ruleCount: number;
     stockCount: number;
+}
+
+export interface UncoveredAutoSellSuggestedRule {
+    ruleId: number;
+    ruleName: string;
+    minPrice: number | null;
+    maxPrice: number | null;
+}
+
+export interface UncoveredAutoSellItemAlert {
+    accountId: string;
+    itemId: string;
+    itemTitle: string | null;
+    latestOrderId: string;
+    latestPrice: string | null;
+    latestStatus: number;
+    latestStatusText: string;
+    latestUpdatedAt: string;
+    recentOrderCount: number;
+    suggestedRules: UncoveredAutoSellSuggestedRule[];
 }

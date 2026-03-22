@@ -23,6 +23,7 @@ export interface AutoSellRule {
     name: string
     enabled: boolean
     itemId: string | null
+    itemIds: string[]
     accountId: string | null
     minPrice: number | null
     maxPrice: number | null
@@ -45,6 +46,7 @@ export interface DbAutoSellRule {
     name: string
     enabled: number
     item_id: string | null
+    item_ids: string | null
     account_id: string | null
     min_price: number | null
     max_price: number | null
@@ -112,6 +114,7 @@ export interface CreateAutoSellRuleParams {
     name: string
     enabled?: boolean
     itemId?: string | null
+    itemIds?: string[] | null
     accountId?: string | null
     minPrice?: number | null
     maxPrice?: number | null
@@ -129,6 +132,7 @@ export interface UpdateAutoSellRuleParams {
     name?: string
     enabled?: boolean
     itemId?: string | null
+    itemIds?: string[] | null
     accountId?: string | null
     minPrice?: number | null
     maxPrice?: number | null
@@ -147,4 +151,24 @@ export interface DeliveryResult {
     content?: string
     followUpMessage?: string
     error?: string
+}
+
+export interface UncoveredAutoSellSuggestedRule {
+    ruleId: number
+    ruleName: string
+    minPrice: number | null
+    maxPrice: number | null
+}
+
+export interface UncoveredAutoSellItemAlert {
+    accountId: string
+    itemId: string
+    itemTitle: string | null
+    latestOrderId: string
+    latestPrice: string | null
+    latestStatus: number
+    latestStatusText: string
+    latestUpdatedAt: string
+    recentOrderCount: number
+    suggestedRules: UncoveredAutoSellSuggestedRule[]
 }

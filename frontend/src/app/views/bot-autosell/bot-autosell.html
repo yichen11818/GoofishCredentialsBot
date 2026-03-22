@@ -3,6 +3,66 @@
         <h2 class="text-2xl font-bold">自动发货</h2>
     </div>
 
+    @if (loadingCoverageAlerts() || coverageAlerts().length > 0) {
+    <div class="alert alert-warning mb-6 items-start">
+        <div class="w-full">
+            <div class="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                    <div class="font-semibold">
+                        最近发现 {{ coverageAlerts().length }} 个未命中的商品
+                    </div>
+                    <div class="text-sm opacity-80">
+                        这些订单没有命中当前自动发货规则，常见原因是商品 ID 未覆盖，或者价格没有落进任何启用的 SKU 区间。
+                    </div>
+                </div>
+                <button type="button" class="btn btn-xs btn-outline" (click)="loadCoverageAlerts()"
+                    [disabled]="loadingCoverageAlerts()">
+                    @if (loadingCoverageAlerts()) {
+                    刷新中...
+                    } @else {
+                    刷新提示
+                    }
+                </button>
+            </div>
+
+            @if (!loadingCoverageAlerts()) {
+            <div class="mt-4 space-y-3">
+                @for (alert of coverageAlerts(); track alert.itemId) {
+                <div class="rounded-lg border border-warning/30 bg-base-100/80 p-3">
+                    <div class="font-medium break-all">{{ alert.itemTitle || '未命名商品' }}</div>
+                    <div class="text-xs text-base-content/60 break-all mt-1">
+                        item_id: {{ alert.itemId }} · 最近订单 {{ alert.latestOrderId }} · 价格
+                        {{ alert.latestPrice || '未知' }} · {{ alert.latestStatusText }}
+                    </div>
+                    <div class="text-xs text-base-content/50 mt-1">
+                        最近 {{ alert.recentOrderCount }} 笔相关订单，最后更新时间 {{ alert.latestUpdatedAt }}
+                    </div>
+
+                    <div class="mt-3">
+                        @if (alert.suggestedRules.length > 0) {
+                        <div class="text-xs font-medium text-base-content/70 mb-2">按价格最接近这些 SKU 规则：</div>
+                        <div class="flex flex-wrap gap-2">
+                            @for (rule of alert.suggestedRules; track rule.ruleId) {
+                            <div class="badge badge-outline badge-warning gap-1 h-auto py-2 px-3">
+                                {{ rule.ruleName }}
+                                <span class="opacity-70">{{ formatSuggestedRuleRange(rule) }}</span>
+                            </div>
+                            }
+                        </div>
+                        } @else {
+                        <div class="text-xs text-base-content/60">
+                            当前没有按价格可直接套用的 SKU 规则，可能需要新增一个价格分组。
+                        </div>
+                        }
+                    </div>
+                </div>
+                }
+            </div>
+            }
+        </div>
+    </div>
+    }
+
     <!-- 响应式两栏布局 -->
     <div class="grid grid-cols-1 xl:grid-cols-3 gap-6">
         <!-- 左侧：添加/编辑表单 -->
@@ -37,26 +97,70 @@
                         <!-- 商品选择 -->
                         <div class="form-control">
                             <label class="label py-1">
-                                <span class="label-text">选择商品 <span class="text-error">*</span></span>
+                                <span class="label-text">选择商品（可多选，可留空）</span>
                             </label>
-                            @if (selectedGoods(); as goods) {
-                            <div class="flex items-center gap-2 p-2 bg-base-200 rounded-lg">
-                                <img [src]="goods.picUrl" class="w-10 h-10 rounded object-cover" />
-                                <div class="flex-1 min-w-0">
-                                    <div class="text-sm font-medium truncate">{{ goods.title }}</div>
-                                    <div class="text-xs text-base-content/50">¥{{ goods.price }}</div>
+                            @if (formData().itemIds.length === 0) {
+                            <div class="mb-2 rounded-lg border border-dashed border-base-300 bg-base-200/60 px-3 py-2">
+                                <div class="text-sm font-medium">当前未限制商品</div>
+                                <div class="text-xs text-base-content/60">
+                                    这条规则会对当前账号下的全部商品生效，只按触发时机和价格区间匹配。
                                 </div>
-                                <button type="button" class="btn btn-ghost btn-xs btn-square"
-                                    (click)="clearGoodsSelection()">
-                                    <lucide-angular [img]="icons.X" class="w-4 h-4" />
-                                </button>
                             </div>
-                            } @else {
+                            }
+                            @if (formData().itemIds.length > 0) {
+                            <div class="space-y-2 mb-2">
+                                <div class="flex items-center justify-between gap-2">
+                                    <span class="text-xs text-base-content/60">
+                                        已选 {{ formData().itemIds.length }} 个商品，共用同一套规则和库存
+                                    </span>
+                                    <button type="button" class="btn btn-ghost btn-xs" (click)="clearGoodsSelection()">
+                                        清空
+                                    </button>
+                                </div>
+                                <div class="space-y-2 max-h-48 overflow-y-auto">
+                                    @for (itemId of formData().itemIds; track itemId) {
+                                    @if (getGoodsById(itemId); as goods) {
+                                    <div class="flex items-center gap-2 p-2 bg-base-200 rounded-lg">
+                                        <img [src]="goods.picUrl" class="w-10 h-10 rounded object-cover" />
+                                        <div class="flex-1 min-w-0">
+                                            <div class="text-sm font-medium truncate">{{ goods.title }}</div>
+                                            <div class="text-xs text-base-content/50">
+                                                ¥{{ goods.price }}
+                                                @if (goods.accountNickname) {
+                                                · {{ goods.accountNickname }}
+                                                }
+                                            </div>
+                                        </div>
+                                        <button type="button" class="btn btn-ghost btn-xs btn-square"
+                                            (click)="removeGoodsSelection(itemId)">
+                                            <lucide-angular [img]="icons.X" class="w-4 h-4" />
+                                        </button>
+                                    </div>
+                                    } @else {
+                                    <div class="flex items-center gap-2 p-2 bg-base-200 rounded-lg">
+                                        <div
+                                            class="w-10 h-10 rounded bg-base-300 flex items-center justify-center text-xs text-base-content/50">
+                                            ID
+                                        </div>
+                                        <div class="flex-1 min-w-0">
+                                            <div class="text-sm font-medium truncate">{{ itemId }}</div>
+                                            <div class="text-xs text-base-content/50">商品详情暂未加载</div>
+                                        </div>
+                                        <button type="button" class="btn btn-ghost btn-xs btn-square"
+                                            (click)="removeGoodsSelection(itemId)">
+                                            <lucide-angular [img]="icons.X" class="w-4 h-4" />
+                                        </button>
+                                    </div>
+                                    }
+                                    }
+                                </div>
+                            </div>
+                            }
                             <div class="relative">
                                 <input type="text" class="input input-bordered input-sm w-full"
                                     [ngModel]="goodsSearch()" (ngModelChange)="goodsSearch.set($event)"
                                     (focus)="onGoodsSearchFocus()" (blur)="onGoodsSearchBlur()" name="goodsSearch"
-                                    placeholder="搜索商品名称或ID..." />
+                                    placeholder="搜索商品名称或ID继续添加；留空则匹配全部商品..." />
                                 @if (loadingGoods()) {
                                 <span
                                     class="absolute right-2 top-1/2 -translate-y-1/2 loading loading-spinner loading-xs"></span>
@@ -88,7 +192,11 @@
                                 </div>
                                 }
                             </div>
-                            }
+                            <label class="label py-1">
+                                <span class="label-text-alt text-base-content/50">
+                                    留空表示全部商品都可命中这条规则；选中商品后则只匹配这些商品
+                                </span>
+                            </label>
                         </div>
 
                         <div class="form-control">
@@ -326,7 +434,7 @@
                         <div>
                             <h3 class="card-title text-lg">SKU 批量生成</h3>
                             <p class="text-sm text-base-content/60 mt-1">
-                                适合同一商品有多个金额档位，例如 28、16.6、2、1。选一次商品后，每行填金额和对应 key，就能一键生成多条库存规则。
+                                适合同一组商品有多个金额档位，例如 28、16.6、2、1。选好商品后，每行填金额和对应 key，就能一键生成多条共享商品范围的库存规则。
                             </p>
                         </div>
                         <span class="badge badge-outline">{{ skuBatchConfiguredCount() }} 行</span>
@@ -412,7 +520,7 @@ key6"></textarea>
                             清空
                         </button>
                         <button type="button" class="btn btn-ghost btn-xs" (click)="exportUnusedStockByGroup()">
-                            导出当前商品未使用库存
+                            导出当前所选商品未使用库存
                         </button>
                     </div>
 
@@ -469,7 +577,7 @@ key6"></textarea>
 
                     <div class="mt-4 p-3 rounded-lg bg-base-200/70 text-sm text-base-content/70 space-y-1">
                         <div>当前公共配置会复用上方已选内容：</div>
-                        <div>商品：{{ selectedGoods()?.title || '未选择' }}</div>
+                        <div>商品：{{ getGoodsSummary(formData().itemIds) }}</div>
                         <div>触发时机：{{ getTriggerLabel(formData().triggerOn) }}</div>
                         <div>发货流程：{{ getWorkflowName(formData().workflowId) }}</div>
                     </div>
@@ -535,8 +643,8 @@ key6"></textarea>
                                     </td>
                                     <td class="font-medium">{{ rule.name }}</td>
                                     <td class="max-w-40">
-                                        <span class="text-sm truncate block" [title]="getGoodsTitle(rule.itemId || '')">
-                                            {{ getGoodsTitle(rule.itemId || '') }}
+                                        <span class="text-sm truncate block" [title]="getRuleGoodsTooltip(rule)">
+                                            {{ getRuleGoodsSummary(rule) }}
                                         </span>
                                     </td>
                                     <td>
@@ -604,7 +712,7 @@ key6"></textarea>
                                 <div class="text-sm mt-2 space-y-1">
                                     <div class="flex gap-2">
                                         <span class="text-base-content/50 shrink-0">商品:</span>
-                                        <span class="truncate">{{ getGoodsTitle(rule.itemId || '') }}</span>
+                                        <span class="truncate">{{ getRuleGoodsSummary(rule) }}</span>
                                     </div>
                                     <div class="flex gap-2">
                                         <span class="text-base-content/50 shrink-0">价格:</span>

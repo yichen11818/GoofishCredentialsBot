@@ -156,7 +156,9 @@ async function triggerAutoSell(
         )
 
         if (!matchedRule) {
-            logger.debug(`订单 ${orderId} 无匹配的自动发货规则`)
+            logger.warn(
+                `订单 ${orderId} 未命中自动发货规则: itemId=${itemId || '空'}, price=${orderPrice || '空'}, triggerOn=${triggerOn}`
+            )
             return
         }
 

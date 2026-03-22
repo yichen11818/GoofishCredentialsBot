@@ -9,7 +9,7 @@ import { AutoSellService, AccountService, GoodsService, WorkflowService } from '
 import { CodeEditorComponent } from '../../components/code-editor/code-editor.component';
 import type {
     AutoSellRule, DeliveryType, TriggerOn, ApiConfig, Account, GoodsItem, StockItem, StockStats,
-    Workflow
+    Workflow, UncoveredAutoSellItemAlert, UncoveredAutoSellSuggestedRule
 } from '../../core/types';
 
 interface SkuBatchRowDraft {
@@ -37,7 +37,9 @@ export class BotAutosellComponent implements OnInit {
 
     rules = signal<AutoSellRule[]>([]);
     workflows = signal<Workflow[]>([]);
+    coverageAlerts = signal<UncoveredAutoSellItemAlert[]>([]);
     loading = signal(false);
+    loadingCoverageAlerts = signal(false);
     saving = signal(false);
     editingRule = signal<AutoSellRule | null>(null);
     showStockModal = signal(false);
@@ -79,6 +81,7 @@ export class BotAutosellComponent implements OnInit {
     filteredGoods = computed(() => {
         const search = this.goodsSearch().toLowerCase();
         const accountId = this.formData().accountId;
+        const selectedItemIds = new Set(this.formData().itemIds);
         let goods = this.allGoods();
 
         if (accountId) {
@@ -90,14 +93,10 @@ export class BotAutosellComponent implements OnInit {
                 g.id.includes(search)
             );
         }
+        goods = goods.filter(g => !selectedItemIds.has(g.id));
         return goods.slice(0, 20);
     });
 
-    selectedGoods = computed(() => {
-        const itemId = this.formData().itemId;
-        if (!itemId) return null;
-        return this.allGoods().find(g => g.id === itemId) || null;
-    });
     skuBatchConfiguredCount = computed(() =>
         this.skuBatchRows().filter(row => row.price.trim() || row.stockContent.trim() || row.label.trim()).length
     );
@@ -105,7 +104,7 @@ export class BotAutosellComponent implements OnInit {
     formData = signal({
         name: '',
         enabled: true,
-        itemId: null as string | null,
+        itemIds: [] as string[],
         accountId: null as string | null,
         minPrice: null as number | null,
         maxPrice: null as number | null,
@@ -137,6 +136,7 @@ export class BotAutosellComponent implements OnInit {
         this.loadAccounts();
         this.loadAllGoods();
         this.loadWorkflows();
+        this.loadCoverageAlerts();
     }
 
     async loadWorkflows() {
@@ -174,10 +174,27 @@ export class BotAutosellComponent implements OnInit {
         try {
             const res = await this.service.getRules();
             this.rules.set(res.rules);
+            await this.loadCoverageAlerts();
         } catch (e) {
             console.error('加载规则失败', e);
         } finally {
             this.loading.set(false);
+        }
+    }
+
+    async loadCoverageAlerts() {
+        this.loadingCoverageAlerts.set(true);
+        try {
+            const res = await this.service.getCoverageAlerts({
+                accountId: this.formData().accountId,
+                triggerOn: this.formData().triggerOn,
+                limit: 10
+            });
+            this.coverageAlerts.set(res.items);
+        } catch (e) {
+            console.error('加载未覆盖商品提示失败', e);
+        } finally {
+            this.loadingCoverageAlerts.set(false);
         }
     }
 
@@ -187,7 +204,7 @@ export class BotAutosellComponent implements OnInit {
         this.formData.set({
             name: rule.name,
             enabled: rule.enabled,
-            itemId: rule.itemId,
+            itemIds: rule.itemIds?.length ? [...rule.itemIds] : (rule.itemId ? [rule.itemId] : []),
             accountId: rule.accountId,
             minPrice: rule.minPrice,
             maxPrice: rule.maxPrice,
@@ -215,7 +232,7 @@ export class BotAutosellComponent implements OnInit {
         this.formData.set({
             name: '',
             enabled: true,
-            itemId: null,
+            itemIds: [],
             accountId: null,
             minPrice: null,
             maxPrice: null,
@@ -240,23 +257,43 @@ export class BotAutosellComponent implements OnInit {
     ) {
         this.formData.update(f => ({ ...f, [field]: value }));
         if (field === 'accountId') {
-            this.formData.update(f => ({ ...f, itemId: null }));
+            const nextAccountId = value as string | null;
+            this.formData.update(f => ({
+                ...f,
+                itemIds: nextAccountId
+                    ? f.itemIds.filter(itemId => this.getGoodsById(itemId)?.accountId === nextAccountId)
+                    : f.itemIds
+            }));
             this.goodsSearch.set('');
+        }
+        if (field === 'accountId' || field === 'triggerOn') {
+            void this.loadCoverageAlerts();
         }
     }
 
     selectGoods(goods: GoodsItem) {
-        this.formData.update(f => ({
-            ...f,
-            itemId: goods.id,
-            accountId: goods.accountId || null
-        }));
+        this.formData.update(f => {
+            const itemIds = f.itemIds.includes(goods.id) ? f.itemIds : [...f.itemIds, goods.id];
+            const shouldAdoptAccount = !f.accountId && f.itemIds.length === 0 && goods.accountId;
+            return {
+                ...f,
+                itemIds,
+                accountId: shouldAdoptAccount ? goods.accountId || null : f.accountId
+            };
+        });
         this.goodsSearch.set('');
         this.showGoodsDropdown.set(false);
     }
 
+    removeGoodsSelection(itemId: string) {
+        this.formData.update(f => ({
+            ...f,
+            itemIds: f.itemIds.filter(id => id !== itemId)
+        }));
+    }
+
     clearGoodsSelection() {
-        this.formData.update(f => ({ ...f, itemId: null }));
+        this.formData.update(f => ({ ...f, itemIds: [] }));
         this.goodsSearch.set('');
     }
 
@@ -351,16 +388,56 @@ export class BotAutosellComponent implements OnInit {
         return price.toFixed(2).replace(/\.00$/, '').replace(/(\.\d*[1-9])0+$/, '$1');
     }
 
+    getGoodsById(itemId: string): GoodsItem | undefined {
+        return this.allGoods().find(g => g.id === itemId);
+    }
+
     getGoodsTitle(itemId: string): string {
-        const goods = this.allGoods().find(g => g.id === itemId);
+        const goods = this.getGoodsById(itemId);
         return goods?.title || itemId;
+    }
+
+    getGoodsSummary(itemIds: string[]): string {
+        if (itemIds.length === 0) {
+            return '未选择';
+        }
+
+        const titles = itemIds.map(itemId => this.getGoodsTitle(itemId));
+        if (titles.length === 1) {
+            return titles[0];
+        }
+
+        return `${titles[0]} 等 ${titles.length} 个商品`;
+    }
+
+    getRuleItemIds(rule: Pick<AutoSellRule, 'itemId' | 'itemIds'>): string[] {
+        const itemIds = rule.itemIds?.length ? rule.itemIds : (rule.itemId ? [rule.itemId] : []);
+        return Array.from(new Set(itemIds.map(itemId => String(itemId || '').trim()).filter(Boolean)));
+    }
+
+    getRuleGoodsSummary(rule: Pick<AutoSellRule, 'itemId' | 'itemIds'>): string {
+        const itemIds = this.getRuleItemIds(rule);
+        if (itemIds.length === 0) {
+            return '全部商品';
+        }
+
+        return this.getGoodsSummary(itemIds);
+    }
+
+    getRuleGoodsTooltip(rule: Pick<AutoSellRule, 'itemId' | 'itemIds'>): string {
+        const itemIds = this.getRuleItemIds(rule);
+        if (itemIds.length === 0) {
+            return '全部商品';
+        }
+
+        return itemIds.map(itemId => this.getGoodsTitle(itemId)).join('\n');
     }
 
     getSkuBatchBaseName(): string {
         const manualName = this.formData().name.trim();
         if (manualName) return manualName;
-        const goods = this.selectedGoods();
-        if (goods?.title) return goods.title;
+        const itemIds = this.formData().itemIds;
+        if (itemIds.length > 0) return this.getGoodsSummary(itemIds);
         return 'SKU 自动发货';
     }
 
@@ -390,6 +467,10 @@ export class BotAutosellComponent implements OnInit {
         }
 
         return `¥${range.minPrice} - ¥${range.maxPrice}`;
+    }
+
+    formatSuggestedRuleRange(rule: Pick<UncoveredAutoSellSuggestedRule, 'minPrice' | 'maxPrice'>): string {
+        return this.formatPriceRange(rule);
     }
 
     parseSkuHeader(headerText: string): { priceText: string; label: string } | null {
@@ -491,26 +572,25 @@ export class BotAutosellComponent implements OnInit {
     }
 
     async exportUnusedStockByGroup() {
-        const itemId = this.formData().itemId;
-        if (!itemId) {
-            await this.dialog.alert('提示', '请先选择商品，再导出未使用库存');
+        const itemIds = this.formData().itemIds;
+        if (itemIds.length === 0) {
+            await this.dialog.alert('提示', '请先选择至少一个商品，再导出未使用库存');
             return;
         }
 
         try {
             const res = await this.service.exportUnusedStock({
-                itemId,
+                itemIds,
                 accountId: this.formData().accountId,
                 triggerOn: this.formData().triggerOn
             });
 
             if (!res.content.trim()) {
-                await this.dialog.alert('提示', '当前商品没有可导出的未使用库存');
+                await this.dialog.alert('提示', '当前所选商品没有可导出的未使用库存');
                 return;
             }
 
-            const goods = this.selectedGoods();
-            const fileBaseName = (goods?.title || this.getGoodsTitle(itemId) || itemId)
+            const fileBaseName = this.getGoodsSummary(itemIds)
                 .replace(/[\\/:*?"<>|]/g, '_')
                 .trim();
             const triggerLabel = this.getTriggerLabel(this.formData().triggerOn);
@@ -534,11 +614,6 @@ export class BotAutosellComponent implements OnInit {
 
     async createSkuBatchRules() {
         const data = this.formData();
-        if (!data.itemId) {
-            await this.dialog.alert('提示', '请先在上方选择商品，再批量生成 SKU 规则');
-            return;
-        }
-
         const floatPercent = this.normalizeOptionalPrice(this.skuBatchFloatPercent());
         if (floatPercent === null || floatPercent < 0) {
             await this.dialog.alert('提示', '请输入有效的浮动比例');
@@ -623,7 +698,8 @@ export class BotAutosellComponent implements OnInit {
                 const res = await this.service.createRule({
                     name: row.ruleName,
                     enabled: data.enabled,
-                    itemId: data.itemId,
+                    itemId: data.itemIds[0] || null,
+                    itemIds: data.itemIds,
                     accountId: data.accountId,
                     minPrice: row.minPrice,
                     maxPrice: row.maxPrice,
@@ -666,10 +742,6 @@ export class BotAutosellComponent implements OnInit {
         const data = this.formData();
         if (!data.name) {
             await this.dialog.alert('提示', '请输入规则名称');
-            return;
-        }
-        if (!data.itemId) {
-            await this.dialog.alert('提示', '请选择商品');
             return;
         }
 
@@ -721,7 +793,8 @@ export class BotAutosellComponent implements OnInit {
         const payload: Partial<AutoSellRule> = {
             name: data.name,
             enabled: data.enabled,
-            itemId: data.itemId,
+            itemId: data.itemIds[0] || null,
+            itemIds: data.itemIds,
             accountId: data.accountId,
             minPrice,
             maxPrice,
